@@ -9,17 +9,24 @@ const TMP_DIR = path.join(WORK_DIR, "tmp");
 const BED_PATH = path.join(WORK_DIR, "branding", "bed.mp3");
 const INTRO_PATH = path.join(WORK_DIR, "branding", "intro.mp3");
 const BRIDGE_PATH = path.join(WORK_DIR, "branding", "bridge.mp3");
+const QUICK_NEWS_PATH = path.join(WORK_DIR, "branding", "quick-news.mp3");
 const OUT_PATH = path.join(WORK_DIR, "final.mp3");
 type Mode = "uwu" | "northern" | "unhinged";
 
 const VOICE_IDS: Record<Mode, string> = {
-	uwu: "jBpfuIE2acCO8z3wKNLl", // Gigi - young, bubbly
+	uwu: "HPgvmvNeeyXCxyMbap79", // UWU Kawaii Anchor - custom designed cute anime voice
 	northern: "7rQX8r6PVq3gfJ8rZzyE", // John of the North
 	unhinged: "rHWSYoq8UlV0YIBKMryp", // The unhinged surfer
 };
 
 const RSS_FEEDS = [
 	"https://feeds.bbci.co.uk/news/rss.xml",
+	"https://feeds.bbci.co.uk/news/uk/rss.xml",
+	"https://feeds.bbci.co.uk/news/politics/rss.xml",
+	"https://feeds.bbci.co.uk/news/technology/rss.xml",
+	"https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+	"https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+	"https://feeds.bbci.co.uk/news/business/rss.xml",
 	"https://feeds.npr.org/1001/rss.xml",
 	"https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
 	"https://www.theguardian.com/world/rss",
@@ -38,7 +45,7 @@ interface UwuScript {
 
 // ── Step 1: Fetch RSS stories ─────────────────────────────────────────────────
 
-async function fetchRssStories(feeds: string[]): Promise<Story[]> {
+async function fetchRssStories(feeds: string[], limit = 20): Promise<Story[]> {
 	const parser = new XMLParser({
 		ignoreAttributes: false,
 		cdataPropName: "__cdata",
@@ -83,14 +90,17 @@ async function fetchRssStories(feeds: string[]): Promise<Story[]> {
 				if (typeof item !== "object" || item === null) continue;
 				const obj = item as Record<string, unknown>;
 
-				const rawTitle =
-					(obj.title as string) ||
-					((obj.title as Record<string, unknown>)?.__cdata as string) ||
-					"";
-				const rawDesc =
-					(obj.description as string) ||
-					((obj.description as Record<string, unknown>)?.__cdata as string) ||
-					"";
+				const extractText = (val: unknown): string => {
+					if (typeof val === "string") return val;
+					if (typeof val === "object" && val !== null) {
+						const o = val as Record<string, unknown>;
+						if (typeof o.__cdata === "string") return o.__cdata;
+					}
+					return "";
+				};
+
+				const rawTitle = extractText(obj.title);
+				const rawDesc = extractText(obj.description);
 
 				const title = stripHtml(rawTitle);
 				const description = stripHtml(rawDesc);
@@ -99,7 +109,7 @@ async function fetchRssStories(feeds: string[]): Promise<Story[]> {
 				seen.add(title);
 				stories.push({ title, description });
 
-				if (stories.length >= 20) break;
+				if (stories.length >= limit) break;
 			}
 		} catch (e) {
 			console.warn(`[RSS] Parse error for ${result.value.url}: ${e}`);
@@ -114,56 +124,66 @@ async function fetchRssStories(feeds: string[]): Promise<Story[]> {
 
 // ── Step 2: Generate script via OpenRouter ────────────────────────────────────
 
-const USER_MESSAGES: Record<Mode, (stories: Story[]) => string> = {
-	uwu: (
-		stories,
-	) => `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in UWU kawaii style.
+const USER_MESSAGES: Record<Mode, (stories: Story[], topic: string | null) => string> = {
+	uwu: (stories, topic) => {
+		const pick = topic
+			? `These stories are all about "${topic}". Rewrite ALL of them in UWU kawaii style for a quick topic-focused bulletin.`
+			: `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in UWU kawaii style.`;
+		return `${pick}
 
 Stories:
 ${JSON.stringify(stories, null, 2)}
 
 Return this exact JSON structure (raw JSON only, no code fences):
 {
-  "intro": "UWU kawaii welcome greeting followed by a brief one-sentence teaser for each story you selected (like a headlines preview), e.g. 'Coming up: something about bwead pwices~ and a vewy exciting thing about space OwO!'",
+  "intro": "UWU kawaii welcome greeting${topic ? ` mentioning today's topic is ${topic}` : ""} followed by a brief one-sentence teaser for each story you selected (like a headlines preview), e.g. 'Coming up: something about bwead pwices and a vewy exciting thing about space!'",
   "stories": ["full rewritten story 1", "full rewritten story 2", ...],
   "outro": "UWU kawaii goodbye sign-off message"
-}`,
-	northern: (
-		stories,
-	) => `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in John of the North style.
+}`;
+	},
+	northern: (stories, topic) => {
+		const pick = topic
+			? `These stories are all about "${topic}". Rewrite ALL of them in John of the North style for a quick topic-focused bulletin.`
+			: `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in John of the North style.`;
+		return `${pick}
 
 Stories:
 ${JSON.stringify(stories, null, 2)}
 
 Return this exact JSON structure (raw JSON only, no code fences):
 {
-  "intro": "John's passionate northern welcome with a headline teaser for each story",
+  "intro": "John's passionate northern welcome${topic ? ` about today's focus on ${topic}` : ""} with a headline teaser for each story",
   "stories": ["full rewritten story with tangents and northern dialect", ...],
   "outro": "John's rousing northern sign-off"
-}`,
-	unhinged: (
-		stories,
-	) => `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in the unhinged surfer anchor style.
+}`;
+	},
+	unhinged: (stories, topic) => {
+		const pick = topic
+			? `These stories are all about "${topic}". Rewrite ALL of them in the unhinged surfer anchor style for a quick topic-focused bulletin.`
+			: `Here are today's top news stories. Select 5-8 of the most interesting ones and rewrite them in the unhinged surfer anchor style.`;
+		return `${pick}
 
 Stories:
 ${JSON.stringify(stories, null, 2)}
 
 Return this exact JSON structure (raw JSON only, no code fences):
 {
-  "intro": "Manic upbeat welcome laced with swearing, surfboard references, and a flash of existential dread, with teasers for each story",
+  "intro": "Manic upbeat welcome laced with swearing, surfboard references, and a flash of existential dread${topic ? `, mentioning today's focus on ${topic}` : ""}, with teasers for each story",
   "stories": ["full rewritten story with swearing, surfboard tangents, and underlying hatred of existence", ...],
   "outro": "Cheerful sign-off that briefly acknowledges nothing matters before wishing everyone a sick session"
-}`,
+}`;
+	},
 };
 
 function buildPrompts(
 	stories: Story[],
 	mode: Mode,
+	topic: string | null,
 ): { systemPrompt: string; userMessage: string } {
 	const systemPrompt = fs
 		.readFileSync(path.join(WORK_DIR, `prompts/${mode}.md`), "utf8")
 		.trim();
-	const userMessage = USER_MESSAGES[mode](stories);
+	const userMessage = USER_MESSAGES[mode](stories, topic);
 	return { systemPrompt, userMessage };
 }
 
@@ -171,10 +191,11 @@ async function generateScript(
 	stories: Story[],
 	apiKey: string,
 	mode: Mode,
+	topic: string | null = null,
 ): Promise<UwuScript> {
 	console.log(`[OpenRouter] Generating ${mode} script...`);
 
-	const { systemPrompt, userMessage } = buildPrompts(stories, mode);
+	const { systemPrompt, userMessage } = buildPrompts(stories, mode, topic);
 
 	const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
 		method: "POST",
@@ -321,14 +342,41 @@ function mixAudio(audio: AudioFiles): void {
 	const { introFile, storyFiles, outroFile } = audio;
 	const t = (name: string) => path.join(TMP_DIR, name);
 
-	// ── 5a. Concat story voice files (with 0.5s silence between each) ───────────
+	const XFADE = 1.5; // crossfade duration (seconds) for music transitions
+
+	const getDuration = (file: string): number => {
+		const out = execSync(
+			`ffprobe -v error -show_entries format=duration -of csv=p=0 "${file}"`,
+		).toString().trim();
+		return parseFloat(out);
+	};
+
+	// ── 5a. Trim silence from TTS files & concat stories ─────────────────────
+	// silenceremove strips leading/trailing dead air that TTS engines add
+	const trimSilence = (input: string, output: string, label: string) => {
+		ffmpeg(
+			`-i "${input}" -af "silenceremove=start_periods=1:start_threshold=-40dB,areverse,silenceremove=start_periods=1:start_threshold=-40dB,areverse" -ac 2 -ar 44100 -q:a 2 "${output}"`,
+			label,
+		);
+	};
+
+	console.log("[ffmpeg] Trimming silence from TTS files...");
+	trimSilence(introFile, t("voice_intro.mp3"), "trim intro");
+	trimSilence(outroFile, t("voice_outro.mp3"), "trim outro");
+	const trimmedStories: string[] = [];
+	for (let i = 0; i < storyFiles.length; i++) {
+		const out = t(`voice_story_${i}.mp3`);
+		trimSilence(storyFiles[i], out, `trim story ${i}`);
+		trimmedStories.push(out);
+	}
+
 	const silencePath = t("silence.mp3");
 	ffmpeg(
 		`-f lavfi -i anullsrc=r=44100:cl=stereo -t 0.5 -q:a 2 "${silencePath}"`,
 		"silence gen",
 	);
-	const storiesWithGaps = storyFiles.flatMap((f, i) =>
-		i < storyFiles.length - 1
+	const storiesWithGaps = trimmedStories.flatMap((f, i) =>
+		i < trimmedStories.length - 1
 			? [`file '${f}'`, `file '${silencePath}'`]
 			: [`file '${f}'`],
 	);
@@ -341,67 +389,99 @@ function mixAudio(audio: AudioFiles): void {
 
 	// ── 5b. Build sections — all normalised to 44100 Hz stereo mp3 ───────────
 
-	// Section 1: intro.mp3 music (strip cover art, normalise)
+	// Section 1: intro jingle
 	console.log("[ffmpeg] Building section: intro music...");
 	ffmpeg(
-		`-i "${INTRO_PATH}" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec1_intro_music.mp3")}"`,
+		`-i "${INTRO_PATH}" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec1_intro.mp3")}"`,
 		"sec1",
 	);
 
-	// Section 2: TTS welcome+headlines mixed with looping bed (ducked under voice)
-	// Sidechain: voice triggers compression on bed — bed drops when speech is detected
+	// Section 2: welcome + headlines over ducked bed
+	// Voice is delayed by XFADE so the section starts with bed-only audio.
+	// That bed-only lead-in is what crossfades with the intro jingle's tail.
 	console.log("[ffmpeg] Building section: welcome + bed (ducked)...");
+	const delayMs = Math.round(XFADE * 1000);
 	ffmpeg(
-		`-i "${introFile}" -stream_loop -1 -i "${BED_PATH}" ` +
-			`-filter_complex "[0:a]asplit=2[voice_out][voice_sc];[1:a]volume=0.5[bed];` +
+		`-i "${t("voice_intro.mp3")}" -stream_loop -1 -i "${BED_PATH}" ` +
+			`-filter_complex "` +
+			`[0:a]adelay=${delayMs}|${delayMs},asplit=2[voice_out][voice_sc];` +
+			`[1:a]volume=0.5[bed];` +
 			`[bed][voice_sc]sidechaincompress=level_sc=5:threshold=0.02:ratio=8:attack=100:release=600[bed_ducked];` +
 			`[voice_out][bed_ducked]amix=inputs=2:duration=first:normalize=0[out]" ` +
 			`-map "[out]" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec2_welcome.mp3")}"`,
 		"sec2",
 	);
 
-	// Section 3: bridge.mp3 (bed dips away)
+	// Section 3: bridge stinger
 	console.log("[ffmpeg] Building section: bridge...");
 	ffmpeg(
 		`-i "${BRIDGE_PATH}" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec3_bridge.mp3")}"`,
 		"sec3",
 	);
 
-	// Section 4: stories, no bed
+	// Section 4: stories (dry, no bed)
 	console.log("[ffmpeg] Building section: stories (dry)...");
 	ffmpeg(
 		`-i "${t("tts_stories.mp3")}" -ac 2 -ar 44100 -q:a 2 "${t("sec4_stories.mp3")}"`,
 		"sec4",
 	);
 
-	// Section 5: TTS outro mixed with looping bed (ducked under voice)
+	// Section 5: outro over ducked bed
+	// Voice is padded with XFADE of silence at the end so the bed plays alone
+	// as a tail — that tail crossfades into the sign-off jingle.
 	console.log("[ffmpeg] Building section: outro + bed (ducked)...");
 	ffmpeg(
-		`-i "${outroFile}" -stream_loop -1 -i "${BED_PATH}" ` +
-			`-filter_complex "[0:a]asplit=2[voice_out][voice_sc];[1:a]volume=0.5[bed];` +
+		`-i "${t("voice_outro.mp3")}" -stream_loop -1 -i "${BED_PATH}" ` +
+			`-filter_complex "` +
+			`[0:a]apad=pad_dur=${XFADE},asplit=2[voice_out][voice_sc];` +
+			`[1:a]volume=0.5[bed];` +
 			`[bed][voice_sc]sidechaincompress=level_sc=5:threshold=0.02:ratio=8:attack=100:release=600[bed_ducked];` +
 			`[voice_out][bed_ducked]amix=inputs=2:duration=first:normalize=0[out]" ` +
 			`-map "[out]" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec5_outro.mp3")}"`,
 		"sec5",
 	);
 
-	// Section 6: intro.mp3 again as sign-off
+	// Section 6: sign-off jingle
 	console.log("[ffmpeg] Building section: sign-off music...");
 	ffmpeg(
 		`-i "${INTRO_PATH}" -vn -ac 2 -ar 44100 -q:a 2 "${t("sec6_signoff.mp3")}"`,
 		"sec6",
 	);
 
-	// ── 5c. Concatenate all sections into final.mp3 ───────────────────────────
-	const sections = [
-		t("sec1_intro_music.mp3"),
-		t("sec2_welcome.mp3"),
+	// ── 5c. Assemble final — crossfade music, concat speech ──────────────────
+	// Only crossfade at music↔music boundaries so speech is never blended.
+	// sec1 → xfade → sec2 (intro jingle fades into bed lead-in)
+	// sec5 → xfade → sec6 (outro bed tail fades into sign-off jingle)
+	// Everything else is straight concat.
+
+	console.log("[ffmpeg] Crossfading intro → welcome...");
+	const sec1Dur = getDuration(t("sec1_intro.mp3"));
+	const xf1 = Math.min(XFADE, sec1Dur / 2);
+	ffmpeg(
+		`-i "${t("sec1_intro.mp3")}" -i "${t("sec2_welcome.mp3")}" ` +
+			`-filter_complex "[0:a][1:a]acrossfade=d=${xf1.toFixed(2)}:c1=tri:c2=tri[out]" ` +
+			`-map "[out]" -ac 2 -ar 44100 -q:a 2 "${t("xf_intro_welcome.mp3")}"`,
+		"xfade intro→welcome",
+	);
+
+	console.log("[ffmpeg] Crossfading outro → sign-off...");
+	const sec5Dur = getDuration(t("sec5_outro.mp3"));
+	const xf2 = Math.min(XFADE, sec5Dur / 4);
+	ffmpeg(
+		`-i "${t("sec5_outro.mp3")}" -i "${t("sec6_signoff.mp3")}" ` +
+			`-filter_complex "[0:a][1:a]acrossfade=d=${xf2.toFixed(2)}:c1=tri:c2=tri[out]" ` +
+			`-map "[out]" -ac 2 -ar 44100 -q:a 2 "${t("xf_outro_signoff.mp3")}"`,
+		"xfade outro→signoff",
+	);
+
+	// Final assembly: [intro↔welcome] + bridge + stories + [outro↔signoff]
+	const finalSections = [
+		t("xf_intro_welcome.mp3"),
 		t("sec3_bridge.mp3"),
 		t("sec4_stories.mp3"),
-		t("sec5_outro.mp3"),
-		t("sec6_signoff.mp3"),
+		t("xf_outro_signoff.mp3"),
 	];
-	const finalConcatList = sections.map((f) => `file '${f}'`).join("\n");
+	const finalConcatList = finalSections.map((f) => `file '${f}'`).join("\n");
 	fs.writeFileSync(t("final_concat.txt"), finalConcatList);
 	console.log("[ffmpeg] Assembling final.mp3...");
 	ffmpeg(
@@ -410,6 +490,110 @@ function mixAudio(audio: AudioFiles): void {
 	);
 
 	// ── 5d. Cleanup ───────────────────────────────────────────────────────────
+	fs.rmSync(TMP_DIR, { recursive: true, force: true });
+	console.log("[ffmpeg] Cleanup done");
+}
+
+// ── Step 5b: Mix quick-news format ───────────────────────────────────────────
+// Simpler structure: quick-news jingle → all voice over ducked bed → quick-news jingle
+
+function mixQuickNews(audio: AudioFiles): void {
+	const { introFile, storyFiles, outroFile } = audio;
+	const t = (name: string) => path.join(TMP_DIR, name);
+
+	const XFADE = 1.5;
+
+	const getDuration = (file: string): number => {
+		const out = execSync(
+			`ffprobe -v error -show_entries format=duration -of csv=p=0 "${file}"`,
+		).toString().trim();
+		return parseFloat(out);
+	};
+
+	const trimSilence = (input: string, output: string, label: string) => {
+		ffmpeg(
+			`-i "${input}" -af "silenceremove=start_periods=1:start_threshold=-40dB,areverse,silenceremove=start_periods=1:start_threshold=-40dB,areverse" -ac 2 -ar 44100 -q:a 2 "${output}"`,
+			label,
+		);
+	};
+
+	// ── Trim silence from all TTS ────────────────────────────────────────────
+	console.log("[ffmpeg] Trimming silence from TTS files...");
+	trimSilence(introFile, t("voice_intro.mp3"), "trim intro");
+	trimSilence(outroFile, t("voice_outro.mp3"), "trim outro");
+	const trimmedStories: string[] = [];
+	for (let i = 0; i < storyFiles.length; i++) {
+		const out = t(`voice_story_${i}.mp3`);
+		trimSilence(storyFiles[i], out, `trim story ${i}`);
+		trimmedStories.push(out);
+	}
+
+	// ── Concat all voice: intro + stories + outro into one track ─────────────
+	const silencePath = t("silence.mp3");
+	ffmpeg(
+		`-f lavfi -i anullsrc=r=44100:cl=stereo -t 0.5 -q:a 2 "${silencePath}"`,
+		"silence gen",
+	);
+	const allVoiceParts = [
+		t("voice_intro.mp3"),
+		...trimmedStories.flatMap((f, i) =>
+			i < trimmedStories.length - 1 ? [f, silencePath] : [f],
+		),
+		silencePath,
+		t("voice_outro.mp3"),
+	];
+	const voiceConcatList = allVoiceParts.map((f) => `file '${f}'`).join("\n");
+	fs.writeFileSync(t("voice_concat.txt"), voiceConcatList);
+	console.log("[ffmpeg] Concatenating all voice...");
+	ffmpeg(
+		`-f concat -safe 0 -i "${t("voice_concat.txt")}" -c copy "${t("all_voice.mp3")}"`,
+		"voice concat",
+	);
+
+	// ── Mix voice over ducked bed with lead-in and tail for crossfades ───────
+	const delayMs = Math.round(XFADE * 1000);
+	console.log("[ffmpeg] Mixing voice over bed...");
+	ffmpeg(
+		`-i "${t("all_voice.mp3")}" -stream_loop -1 -i "${BED_PATH}" ` +
+			`-filter_complex "` +
+			`[0:a]adelay=${delayMs}|${delayMs},apad=pad_dur=${XFADE},asplit=2[voice_out][voice_sc];` +
+			`[1:a]volume=0.5[bed];` +
+			`[bed][voice_sc]sidechaincompress=level_sc=5:threshold=0.02:ratio=8:attack=100:release=600[bed_ducked];` +
+			`[voice_out][bed_ducked]amix=inputs=2:duration=first:normalize=0[out]" ` +
+			`-map "[out]" -vn -ac 2 -ar 44100 -q:a 2 "${t("voice_bed.mp3")}"`,
+		"voice+bed",
+	);
+
+	// ── Quick-news jingle (normalise) ────────────────────────────────────────
+	console.log("[ffmpeg] Building quick-news jingle...");
+	ffmpeg(
+		`-i "${QUICK_NEWS_PATH}" -vn -ac 2 -ar 44100 -q:a 2 "${t("qn_jingle.mp3")}"`,
+		"qn jingle",
+	);
+
+	// ── Crossfade: jingle → voice+bed → jingle ──────────────────────────────
+	const jingleDur = getDuration(t("qn_jingle.mp3"));
+	const voiceBedDur = getDuration(t("voice_bed.mp3"));
+	const xf1 = Math.min(XFADE, jingleDur / 2);
+	const xf2 = Math.min(XFADE, voiceBedDur / 4);
+
+	console.log("[ffmpeg] Crossfading jingle → voice+bed...");
+	ffmpeg(
+		`-i "${t("qn_jingle.mp3")}" -i "${t("voice_bed.mp3")}" ` +
+			`-filter_complex "[0:a][1:a]acrossfade=d=${xf1.toFixed(2)}:c1=tri:c2=tri[out]" ` +
+			`-map "[out]" -ac 2 -ar 44100 -q:a 2 "${t("xf_open.mp3")}"`,
+		"xfade open",
+	);
+
+	console.log("[ffmpeg] Crossfading → closing jingle...");
+	ffmpeg(
+		`-i "${t("xf_open.mp3")}" -i "${t("qn_jingle.mp3")}" ` +
+			`-filter_complex "[0:a][1:a]acrossfade=d=${xf2.toFixed(2)}:c1=tri:c2=tri[out]" ` +
+			`-map "[out]" -ac 2 -ar 44100 -q:a 2 "${OUT_PATH}"`,
+		"xfade close",
+	);
+
+	// ── Cleanup ──────────────────────────────────────────────────────────────
 	fs.rmSync(TMP_DIR, { recursive: true, force: true });
 	console.log("[ffmpeg] Cleanup done");
 }
@@ -447,23 +631,53 @@ async function main(): Promise<void> {
 			? "unhinged"
 			: "uwu";
 
+	const findIdx = process.argv.indexOf("--find");
+	const findTopic =
+		findIdx !== -1 && findIdx + 1 < process.argv.length
+			? process.argv[findIdx + 1]
+			: null;
+
 	const titles: Record<Mode, string> = {
 		uwu: "UWU News",
 		northern: "John of the North News",
 		unhinged: "Unhinged Surf Report",
 	};
 
-	console.log(`=== ${titles[mode]} ===`);
+	console.log(
+		`=== ${titles[mode]}${findTopic ? ` — searching: "${findTopic}"` : ""} ===`,
+	);
 
-	const stories = await fetchRssStories(RSS_FEEDS);
+	let stories = await fetchRssStories(RSS_FEEDS, findTopic ? 200 : 20);
 	if (stories.length === 0) {
 		console.error("No stories fetched — check network/feeds");
 		process.exit(1);
 	}
 
-	const script = await generateScript(stories, openrouterKey, mode);
+	if (findTopic) {
+		const needle = findTopic.toLowerCase();
+		const filtered = stories.filter(
+			(s) =>
+				s.title.toLowerCase().includes(needle) ||
+				s.description.toLowerCase().includes(needle),
+		);
+		if (filtered.length === 0) {
+			console.error(`No stories found matching "${findTopic}"`);
+			process.exit(1);
+		}
+		stories = filtered;
+		console.log(
+			`[Find] ${filtered.length} stories matching "${findTopic}"`,
+		);
+	}
+
+	const script = await generateScript(stories, openrouterKey, mode, findTopic);
 	const audioFiles = await generateAllAudio(script, elevenKey, VOICE_IDS[mode]);
-	mixAudio(audioFiles);
+
+	if (findTopic) {
+		mixQuickNews(audioFiles);
+	} else {
+		mixAudio(audioFiles);
+	}
 
 	console.log(`\nDone! Output: final.mp3`);
 }
